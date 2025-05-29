@@ -4,7 +4,6 @@
 # -preoblikovanje
 # -sum na daily
 #%%
-
 #%%
 import warnings
 import  pandas as pd
@@ -24,12 +23,12 @@ init.rename(columns={'Časovna značka': 'ds', 'Energija A+': 'y'}, inplace=True
 init
 
 #%%
-def aggregate_to_daily(init):
+def aggregate_to_hourly(init):
   #prepare for prophet
   df_1d = init.copy()
   df_1d = df_1d.rename(columns={'y': 'y15'})
 
-  df_1d['y'] = df_1d['y15'].rolling(window=96, min_periods=1).sum()[95::96]
+  df_1d['y'] = df_1d['y15'].rolling(window=4, min_periods=1).sum()[3::4]
 
   df_1d = df_1d.drop(columns=['y15'])
   df_1d = df_1d.dropna(subset=['y'])
@@ -38,7 +37,7 @@ def aggregate_to_daily(init):
 
   return df_1d
 
-df_1d = aggregate_to_daily(init)
+df_1d = aggregate_to_hourly(init)
 df_1d
 #%% md
 # TRENIRANJE
@@ -51,7 +50,7 @@ import time
 t1 = time.time()
 m.fit(df_1d)
 t2 = time.time()
-print("Time taken: ",t2-t1)
+print("Time taken for training: ",t2-t1)
 
 #%% md
 # Prediction
@@ -61,7 +60,7 @@ t1 = time.time()
 prediction = m.predict(future)
 t2 = time.time()
 prediction = prediction[['ds','yhat']]
-print("Time taken: ",t2-t1)
+print("Time taken for prediction: ",t2-t1)
 prediction
 #%% md
 # Calculating metrics
@@ -77,7 +76,7 @@ actual['Časovna značka'] = pd.to_datetime(actual['Časovna značka'], format='
 
 actual.rename(columns={'Časovna značka': 'ds', 'Energija A+': 'y'}, inplace=True)
 
-actual = aggregate_to_daily(actual)
+actual = aggregate_to_hourly(actual)
 #%%
 united = pd.concat([prediction['yhat'], actual['y']], axis=1)
 united.columns = ['Napoved', 'Dejanska']
@@ -168,7 +167,7 @@ def rolling_forecast(df, train_months, test_month, year=2023):
 # npr. treniraj 11 mesecev, testiraj 12. mesec
 res_11m = rolling_forecast(df_1d, train_months=11, test_month=12, year=2023)
 print(res_11m)
-print("MAE:", res_11m['MAE'].mean())
-print("RMSE:", res_11m['RMSE'].mean())
-print(" MAPE:", res_11m['MAPE'].mean())
-print("sMAPE:", res_11m['sMAPE'].mean())
+print("Povprečni MAE:", res_11m['MAE'].mean())
+print("Povprečni RMSE:", res_11m['RMSE'].mean())
+print("Povprečni MAPE:", res_11m['MAPE'].mean())
+print("Povprečni sMAPE:", res_11m['sMAPE'].mean())
