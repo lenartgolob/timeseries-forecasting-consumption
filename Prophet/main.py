@@ -55,7 +55,7 @@ print("Time taken for training: ",t2-t1)
 #%% md
 # Prediction
 #%%
-future = m.make_future_dataframe(periods=255,freq='D')
+future = m.make_future_dataframe(periods=255,freq='h')
 t1 = time.time()
 prediction = m.predict(future)
 t2 = time.time()
