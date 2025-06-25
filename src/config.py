@@ -14,10 +14,6 @@ TRAIN_WINDOW_DAYS = 366       # full 2024 year (leap year) for training
 TRAIN_WINDOW_HOURS = TRAIN_WINDOW_DAYS * 24  # convert to hours (8784)
 FREQUENCY = "h"               # hourly after aggregation
 
-# ---------- Evaluation parameters -------------------------------------------
-IGNORE_ZERO_CONSUMPTION = True  # Filter out low consumption periods during testing
-ZERO_THRESHOLD = 0.1         # kWh threshold for "zero" consumption (lowered from 0.1)
-
 # ---------- File names ------------------------------------------------------
 PROCESSED_FILE = DATA_PROCESSED_DIR / "hourly.parquet"
 RAW_CSV_FILES = [
