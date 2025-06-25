@@ -1,0 +1,7 @@
+{
+  "lags": [1, 24, 168],
+  "num_leaves": 15,
+  "learning_rate": 0.1,
+  "n_estimators": 50,
+  "min_child_samples": 20
+}

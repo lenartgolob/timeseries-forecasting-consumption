@@ -1,0 +1,8 @@
+pandas>=2.2
+numpy>=1.26
+matplotlib>=3.8
+tqdm>=4.66
+pyarrow>=14.0
+
+lightgbm>=4.3      
+mlforecast>=0.8        

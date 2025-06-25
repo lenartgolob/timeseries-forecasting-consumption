@@ -1,0 +1,3 @@
+"""
+consumption-forecasting package
+"""
