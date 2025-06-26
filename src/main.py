@@ -31,9 +31,9 @@ def load_model_class(name: str):
     return getattr(mdl, class_name)
 
 
-def run(model_name: str):
+def run(model_name: str, train_window: str = "all"):
     # ---------- directories --------------------------------------------------
-    run_stamp = datetime.now().strftime("%Y-%m-%dT%H-%M") + f"-{model_name.capitalize()}"
+    run_stamp = datetime.now().strftime("%Y-%m-%dT%H-%M") + f"-{model_name.capitalize()}-{train_window}"
     model_dir = EXPERIMENT_DIR / model_name  # Model-specific subfolder
     run_dir = model_dir / run_stamp
     fc_dir = run_dir / "forecasts"
@@ -50,14 +50,31 @@ def run(model_name: str):
     # ---------- data ---------------------------------------------------------
     df = pd.read_parquet(PROCESSED_FILE)
 
+    # ---------- calculate training window based on parameter -----------------
+    def get_training_window_info(train_window: str):
+        if train_window == "all":
+            return TRAIN_WINDOW_DAYS, "expanding"  # Use original expanding window
+        elif train_window == "6m":
+            return 183, "rolling"  # ~6 months in days
+        elif train_window == "3m":
+            return 91, "rolling"   # ~3 months in days  
+        elif train_window == "1m":
+            return 30, "rolling"   # 1 month in days
+        elif train_window == "14d":
+            return 14, "rolling"   # 14 days
+        else:
+            raise ValueError(f"Unknown train_window: {train_window}")
+
+    window_days, window_type = get_training_window_info(train_window)
+
     # ---------- walk-forward -------------------------------------------------
     metrics_rows = []
     print(f"\n📊 Starting walk-forward validation...")
-    print(f"   Training window: {TRAIN_WINDOW_DAYS} days ({TRAIN_WINDOW_DAYS*24} hours)")
+    print(f"   Training window: {train_window} ({window_days} days, {window_type})")
     print(f"   Forecast horizon: {HORIZON_HOURS} hours")
     print(f"   Total data points: {len(df)}")
     
-    for walk_num, (train_df, test_df, cut_idx) in enumerate(tqdm(splits(df), desc="walks"), 1):
+    for walk_num, (train_df, test_df, cut_idx) in enumerate(tqdm(splits(df, train_window, window_days), desc="walks"), 1):
         # Log training and test periods
         train_start = train_df["ds"].iloc[0].strftime("%Y-%m-%d %H:%M")
         train_end = train_df["ds"].iloc[-1].strftime("%Y-%m-%d %H:%M") 
@@ -152,5 +169,8 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True,
                         choices=["prophet", "lightgbm", "chronos-bolt-tiny", "chronos-bolt-base"])
+    parser.add_argument("--train-window", default="all",
+                        choices=["all", "6m", "3m", "1m", "14d"],
+                        help="Training window: all=full 2024, 6m=6 months, 3m=3 months, 1m=1 month, 14d=14 days")
     args = parser.parse_args()
-    run(args.model)
+    run(args.model, args.train_window)
