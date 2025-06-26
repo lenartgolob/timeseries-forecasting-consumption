@@ -22,14 +22,20 @@ from .visualization import generate_plots
 
 
 def load_model_class(name: str):
-    mdl = importlib.import_module(f"src.models.{name}_model")
-    return getattr(mdl, f"{name.capitalize()}Model")
+    # Convert hyphens to underscores for module names
+    module_name = name.replace("-", "_")
+    mdl = importlib.import_module(f"src.models.{module_name}_model")
+    
+    # Convert hyphens to underscores and capitalize for class names
+    class_name = name.replace("-", "_").capitalize() + "Model"
+    return getattr(mdl, class_name)
 
 
 def run(model_name: str):
     # ---------- directories --------------------------------------------------
     run_stamp = datetime.now().strftime("%Y-%m-%dT%H-%M") + f"-{model_name.capitalize()}"
-    run_dir = EXPERIMENT_DIR / run_stamp
+    model_dir = EXPERIMENT_DIR / model_name  # Model-specific subfolder
+    run_dir = model_dir / run_stamp
     fc_dir = run_dir / "forecasts"
     fc_dir.mkdir(parents=True, exist_ok=True)
 
@@ -52,8 +58,6 @@ def run(model_name: str):
     print(f"   Total data points: {len(df)}")
     
     for walk_num, (train_df, test_df, cut_idx) in enumerate(tqdm(splits(df), desc="walks"), 1):
-        walk_start_time = time.time()
-        
         # Log training and test periods
         train_start = train_df["ds"].iloc[0].strftime("%Y-%m-%d %H:%M")
         train_end = train_df["ds"].iloc[-1].strftime("%Y-%m-%d %H:%M") 
@@ -64,16 +68,23 @@ def run(model_name: str):
         print(f"   Training: {train_start} → {train_end} ({len(train_df)} hours)")
         print(f"   Testing:  {test_start} → {test_end} ({len(test_df)} hours)")
         
+        # Measure training time
+        train_start_time = time.time()
         model.fit(train_df)
+        train_time = time.time() - train_start_time
+        
+        # Measure prediction time
+        predict_start_time = time.time()
         y_hat = model.predict(HORIZON_HOURS)
+        predict_time = time.time() - predict_start_time
+        
+        # Calculate total walk time
+        walk_time = train_time + predict_time
 
         # save forecast (still use cut_idx for filename to maintain data alignment)
         (fc_dir / f"{model_name}_{cut_idx}.csv").write_text(
             pd.DataFrame({"ds": test_df["ds"], "y_hat": y_hat}).to_csv(index=False)
         )
-
-        # Calculate execution time
-        walk_time = time.time() - walk_start_time
         
         # Calculate average consumption for this day
         avg_consumption = test_df["y"].mean()
@@ -83,10 +94,11 @@ def run(model_name: str):
     
         print(f"   MAE: {mae_val:.3f}")
         print(f"   Avg consumption: {avg_consumption:.2f} kWh/h")
-        print(f"   Walk time: {walk_time:.2f}s")
+        print(f"   Train time: {train_time:.3f}s, Predict time: {predict_time:.3f}s, Total: {walk_time:.3f}s")
         
         metrics_rows.append(
-            dict(walk=walk_num, cut_idx=cut_idx, walk_time=walk_time, avg_consumption=avg_consumption, 
+            dict(walk=walk_num, cut_idx=cut_idx, train_time=train_time, predict_time=predict_time, 
+                 walk_time=walk_time, avg_consumption=avg_consumption, 
                  **compute_metrics(test_df["y"].values, y_hat))
         )
 
@@ -100,6 +112,8 @@ def run(model_name: str):
     avg_mape = sum(mape_values) / len(mape_values) if mape_values else 0
     avg_nrmse = sum(row["nRMSE"] for row in metrics_rows) / len(metrics_rows)
     avg_consumption = sum(row["avg_consumption"] for row in metrics_rows) / len(metrics_rows)
+    avg_train_time = sum(row["train_time"] for row in metrics_rows) / len(metrics_rows)
+    avg_predict_time = sum(row["predict_time"] for row in metrics_rows) / len(metrics_rows)
     avg_walk_time = sum(row["walk_time"] for row in metrics_rows) / len(metrics_rows)
     
     print(f"\n✅ Completed {len(metrics_rows)} walks")
@@ -108,7 +122,9 @@ def run(model_name: str):
     print(f"   Average MAPE: {avg_mape:.2f}%")
     print(f"   Average nRMSE: {avg_nrmse:.3f}")
     print(f"   Average consumption: {avg_consumption:.2f} kWh/h")
-    print(f"   Average walk time: {avg_walk_time:.2f}s")
+    print(f"   Average train time: {avg_train_time:.3f}s")
+    print(f"   Average predict time: {avg_predict_time:.3f}s")
+    print(f"   Average total time: {avg_walk_time:.3f}s")
     print(f"   Results saved to: {run_dir}")
         
     run_info = f"""Completed OK - {len(metrics_rows)} walks
@@ -117,7 +133,9 @@ Average RMSE: {avg_rmse:.3f}
 Average MAPE: {avg_mape:.2f}%
 Average nRMSE: {avg_nrmse:.3f}
 Average consumption: {avg_consumption:.2f} kWh/h
-Average walk time: {avg_walk_time:.2f}s
+Average train time: {avg_train_time:.3f}s
+Average predict time: {avg_predict_time:.3f}s
+Average total time: {avg_walk_time:.3f}s
 """
     (run_dir / "run_info.txt").write_text(run_info)
     
@@ -133,6 +151,6 @@ Average walk time: {avg_walk_time:.2f}s
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--model", required=True,
-                        choices=["prophet", "lightgbm", "chronos"])
+                        choices=["prophet", "lightgbm", "chronos-bolt-tiny", "chronos-bolt-base"])
     args = parser.parse_args()
     run(args.model)

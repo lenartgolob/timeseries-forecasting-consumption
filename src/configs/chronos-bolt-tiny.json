@@ -1,0 +1,6 @@
+{
+  "model_name": "amazon/chronos-bolt-tiny",
+  "device": "auto",
+  "torch_dtype": "auto",
+  "context_length": 512
+}

@@ -6,3 +6,6 @@ pyarrow>=14.0
 
 lightgbm>=4.3      
 mlforecast>=0.8        
+prophet>=1.1
+chronos-forecasting>=1.2.0
+torch>=2.0.0

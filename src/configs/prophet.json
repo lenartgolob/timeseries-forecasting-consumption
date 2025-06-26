@@ -1,0 +1,12 @@
+{
+  "yearly_seasonality": true,
+  "weekly_seasonality": true,
+  "daily_seasonality": true,
+  "seasonality_mode": "additive",
+  "changepoint_prior_scale": 0.05,
+  "seasonality_prior_scale": 10.0,
+  "holidays_prior_scale": 10.0,
+  "mcmc_samples": 0,
+  "interval_width": 0.8,
+  "growth": "linear"
+}

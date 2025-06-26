@@ -1,107 +1,175 @@
-# src/main.py
-"""
-Command-line entry point for every model.
+#%% md
+# Setup:
+# -branje
+# -preoblikovanje
+# -sum na daily
+#%%
 
-Example:
-    python -m src.main --model lightgbm
-"""
+#%%
+import warnings
+import  pandas as pd
+warnings.filterwarnings('ignore')
 
-from __future__ import annotations
+file_path = 'LJ1_23_3-5423-15minMeritve2023-01-01-2023-12-31.xlsx'
 
-import argparse
-import importlib
-import json
+init = pd.read_excel(file_path, sheet_name='3-5423')
+
+init = init[['Časovna značka','Energija A+']]
+
+init['Časovna značka'] = pd.to_datetime(init['Časovna značka'], format='mixed', dayfirst=True)
+
+init.rename(columns={'Časovna značka': 'ds', 'Energija A+': 'y'}, inplace=True)
+
+
+init
+
+#%%
+def aggregate_to_hourly(init):
+  #prepare for prophet
+  df_1d = init.copy()
+  df_1d = df_1d.rename(columns={'y': 'y15'})
+
+  df_1d['y'] = df_1d['y15'].rolling(window=4, min_periods=1).sum()[3::4]
+
+  df_1d = df_1d.drop(columns=['y15'])
+  df_1d = df_1d.dropna(subset=['y'])
+  df_1d=df_1d.reset_index(drop=True)
+  #print(df_1d.head(15))
+
+  return df_1d
+
+df_1d = aggregate_to_hourly(init)
+df_1d
+#%% md
+# TRENIRANJE
+#
+#%%
+from prophet import Prophet
+m = Prophet(yearly_seasonality=True)
+
 import time
-from datetime import datetime
-from pathlib import Path
+t1 = time.time()
+m.fit(df_1d)
+t2 = time.time()
+print("Time taken for training: ",t2-t1)
 
-import pandas as pd
-from tqdm import tqdm
+#%% md
+# Prediction
+#%%
+future = m.make_future_dataframe(periods=255,freq='h')
+t1 = time.time()
+prediction = m.predict(future)
+t2 = time.time()
+prediction = prediction[['ds','yhat']]
+print("Time taken for prediction: ",t2-t1)
+prediction
+#%% md
+# Calculating metrics
+# 
+#%%
+file_path = 'LJ1_23_3-5423-15minMeritve2023-01-01-2024-09-12.xlsx'
 
-from .config import (
-    EXPERIMENT_DIR,
-    PROCESSED_FILE,
-    HORIZON_HOURS,
-)
-from .evaluation import compute_metrics
-from .walk_forward import splits
+actual = pd.read_excel(file_path, sheet_name='3-5423')
+
+actual = actual[['Časovna značka','Energija A+']]
+
+actual['Časovna značka'] = pd.to_datetime(actual['Časovna značka'], format='mixed', dayfirst=True)
+
+actual.rename(columns={'Časovna značka': 'ds', 'Energija A+': 'y'}, inplace=True)
+
+actual = aggregate_to_hourly(actual)
+
+#%%
+united = pd.concat([prediction['yhat'], actual['y']], axis=1)
+united.columns = ['Napoved', 'Dejanska']
+united
+#%% md
+# MAE
+#%%
+mae = (united['Dejanska'] - united['Napoved']).abs().mean()
+print("MAE:", mae)
+#%% md
+# RMSE
+#%%
+rmse = ((united['Dejanska'] - united['Napoved']) ** 2).mean() ** 0.5
+print("RMSE:", rmse)
+
+#%% md
+# 
+#%% md
+# MAPE
+#%%
+mape = ((united['Dejanska'] - united['Napoved']).abs() / united['Dejanska'].abs()).mean() * 100
+print("MAPE:", mape, "%")
+#%% md
+# SMAPE
+#%%
+numerator = (united['Napoved'] - united['Dejanska']).abs()
+denominator = (united['Napoved'].abs() + united['Dejanska'].abs()) / 2
+smape = (numerator / denominator).mean() * 100
+print("sMAPE:", smape, "%")
+
+#%% md
+# Rolling forecast origin
+#%%
+from prophet import Prophet
+import numpy as np
+
+def rolling_forecast(df, train_months, test_month, year=2023):
+    df = df.copy()
+    df['ds'] = pd.to_datetime(df['ds'])
+
+    results = []
 
 
-# --------------------------------------------------------------------------- #
-# Utilities
-# --------------------------------------------------------------------------- #
-def load_model_class(model_name: str):
-    """
-    Dynamically import `<repo>/src/models/{model_name}_model.py`
-    and return the `<CamelCase>Model` class inside.
-    """
-    module = importlib.import_module(f"src.models.{model_name}_model")
-    class_name = f"{model_name.capitalize()}Model"
-    return getattr(module, class_name)
+    start_date = pd.Timestamp(f"{year}-{test_month:02d}-01")
+    end_date = (start_date + pd.offsets.MonthEnd(0))
 
+    current_date = start_date
 
-def load_cfg(model_name: str) -> dict:
-    cfg_path = Path("configs") / f"{model_name}.json"
-    return json.loads(cfg_path.read_text()) if cfg_path.exists() else {}
+    while current_date <= end_date:
+        
+        train_start = current_date - pd.DateOffset(months=train_months)
+        train_end = current_date - pd.Timedelta(days=1)
 
+        train_df = df[(df['ds'] >= train_start) & (df['ds'] <= train_end)]
+        test_df = df[df['ds'] == current_date]
 
-# --------------------------------------------------------------------------- #
-# Main run logic
-# --------------------------------------------------------------------------- #
-def run(model_name: str):
-    # 1: data
-    df = pd.read_parquet(PROCESSED_FILE)
+        if len(train_df) < 2 or test_df.empty:
+            current_date += pd.Timedelta(days=1)
+            continue
 
-    # 2: model
-    cfg = load_cfg(model_name)
-    ModelClass = load_model_class(model_name)
-    model = ModelClass(cfg)
-
-    # 3: prepare run directory
-    stamp = datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
-    run_dir = EXPERIMENT_DIR / f"{stamp}-{model_name.capitalize()}"
-    forecasts_dir = run_dir / "forecasts"
-    forecasts_dir.mkdir(parents=True, exist_ok=True)
-    (run_dir / "params.json").write_text(json.dumps(cfg, indent=2))
-
-    # 4: walk-forward loop
-    metrics_rows = []
-    t0 = time.time()
-    for train_df, test_df, cut_idx in tqdm(splits(df), desc=f"{model_name} walks"):
+        model = Prophet(yearly_seasonality=True)
         model.fit(train_df)
-        y_hat = model.predict(HORIZON_HOURS)
 
-        # 4a: save forecast (24 timestamps, one CSV per walk)
-        pd.DataFrame({"ds": test_df["ds"], "y_hat": y_hat}).to_csv(
-            forecasts_dir / f"{model_name}_{cut_idx}.csv", index=False
-        )
+        future = test_df[['ds']]
+        forecast = model.predict(future)
 
-        # 4b: compute & store metrics
-        metrics_rows.append(
-            dict(walk=cut_idx, **compute_metrics(test_df["y"].values, y_hat))
-        )
+        y_true = test_df['y'].values
+        y_pred = forecast['yhat'].values
 
-    # 5: dump aggregated metrics & timing
-    pd.DataFrame(metrics_rows).to_csv(run_dir / "metrics.csv", index=False)
-    runtime = time.time() - t0
-    (run_dir / "run_info.txt").write_text(
-        f"runtime_seconds: {runtime:.1f}\n"
-        f"num_walks: {len(metrics_rows)}\n"
-        f"model: {model_name}\n"
-    )
-    print(f"✅  finished → {run_dir.relative_to(Path.cwd())}")
+        mae = np.mean(np.abs(y_true - y_pred))
+        rmse = np.sqrt(((y_true - y_pred) ** 2).mean())
+        mape = np.mean(np.abs((y_true - y_pred) / y_true)) * 100
+        smape = np.mean(2 * np.abs(y_true - y_pred) / (np.abs(y_true) + np.abs(y_pred))) * 100
 
+        results.append({
+            'date': current_date.date(),
+            'MAE': mae,
+            'RMSE': rmse,
+            'MAPE': mape,
+            'sMAPE': smape
+        })
 
-# --------------------------------------------------------------------------- #
-# CLI
-# --------------------------------------------------------------------------- #
-if __name__ == "__main__":
-    parser = argparse.ArgumentParser(description="Run walk-forward evaluation.")
-    parser.add_argument(
-        "--model",
-        required=True,
-        choices=["lightgbm", "prophet", "chronos"],
-        help="Which model implementation in src/models/ to use.",
-    )
-    args = parser.parse_args()
-    run(args.model)
+        current_date += pd.Timedelta(days=1)
+
+    return pd.DataFrame(results)
+
+#%%
+# npr. treniraj 11 mesecev, testiraj 12. mesec
+res_11m = rolling_forecast(df_1d, train_months=11, test_month=12, year=2023)
+print(res_11m)
+print("Povprečni MAE:", res_11m['MAE'].mean())
+print("Povprečni RMSE:", res_11m['RMSE'].mean())
+print("Povprečni MAPE:", res_11m['MAPE'].mean())
+print("Povprečni sMAPE:", res_11m['sMAPE'].mean())
